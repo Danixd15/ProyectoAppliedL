@@ -1,19 +1,22 @@
 # -*- coding: utf-8 -*-
-"""
-app.py
-Interfaz interactiva de Streamlit para CrediNova.
-"""
-
 import streamlit as st
 import pandas as pd
 import numpy as np
-import pickle
 import sys
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
+from imblearn.over_sampling import SMOTE
 
-# Clase OutlierCapper para permitir la deserialización de pickle
+# 1. Transformador personalizado para mitigar el efecto de valores atípicos
 class OutlierCapper(BaseEstimator, TransformerMixin):
     def __init__(self, age_cap=74.0, hpw_lower=32.5, hpw_upper=45.0, fnl_lower=12285.0, fnl_upper=415000.0):
         self.age_cap = age_cap
@@ -35,9 +38,8 @@ class OutlierCapper(BaseEstimator, TransformerMixin):
             X_out['fnlwgt'] = X_out['fnlwgt'].clip(lower=self.fnl_lower, upper=self.fnl_upper)
         return X_out
 
-# Registro de namespaces para evitar errores de importación local/remota
+# Registro para compatibilidad
 sys.modules['save_pipeline'] = sys.modules[__name__]
-sys.modules['train_model'] = sys.modules[__name__]
 
 st.set_page_config(
     page_title="CrediNova - Evaluación de Capacidad Económica",
@@ -112,19 +114,88 @@ st.markdown("""
 st.markdown("<div class='main-title'>CrediNova Financial Services S.A.C.</div>", unsafe_allow_html=True)
 st.markdown("<div class='subtitle'>Sistema de Evaluación Predictiva de Ingresos para Segmentación Financiera y Riesgos</div>", unsafe_allow_html=True)
 
+
+# =========================================================================
+# ENTRENAMIENTO AUTOMÁTICO EN LA NUBE (CON MEMORIA EN CACHÉ)
+# =========================================================================
 @st.cache_resource
-def load_pipeline():
+def train_pipeline_in_cloud():
+    # Carga del dataset local (subido a GitHub)
     try:
-        with open('model_pipeline.pkl', 'rb') as file:
-            data = pickle.load(file)
-        return data
+        df = pd.read_csv('adult.csv', sep=';')
     except FileNotFoundError:
-        st.error("No se encontró el archivo 'model_pipeline.pkl'. Por favor, ejecute su script de entrenamiento primero.")
         return None
 
-pipeline_data = load_pipeline()
+    df_clean = df.drop_duplicates().reset_index(drop=True)
+    y = (df_clean['income'] == '>50K').astype(int)
+    X = df_clean.drop(columns=['income'])
 
-if pipeline_data is not None:
+    numeric_cols = ['age', 'fnlwgt', 'educational-num', 'capital-gain', 'capital-loss', 'hours-per-week']
+    categorical_cols = ['workclass', 'education', 'marital-status', 'occupation', 'relationship', 'race', 'gender', 'native-country']
+
+    X['occupation'] = X['occupation'].fillna('Unknown')
+
+    num_pipeline = Pipeline([
+        ('capper', OutlierCapper()),
+        ('scaler', StandardScaler())
+    ])
+
+    cat_pipeline = Pipeline([
+        ('imputer', SimpleImputer(strategy='most_frequent')),
+        ('onehot', OneHotEncoder(drop='first', handle_unknown='ignore'))
+    ])
+
+    preprocessor = ColumnTransformer(transformers=[
+        ('num', num_pipeline, numeric_cols),
+        ('cat', cat_pipeline, categorical_cols)
+    ])
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+
+    X_train_proc = preprocessor.fit_transform(X_train)
+    
+    smote = SMOTE(random_state=42)
+    X_train_res, y_train_res = smote.fit_resample(X_train_proc, y_train)
+
+    # Modelos configurados para ejecutarse de manera rápida en la nube
+    models = {
+        'Regresión Logística': LogisticRegression(max_iter=1000, class_weight='balanced', random_state=42),
+        'Árbol de Decisión': DecisionTreeClassifier(max_depth=8, class_weight='balanced', random_state=42),
+        'Random Forest': RandomForestClassifier(n_estimators=30, max_depth=8, min_samples_split=15, class_weight='balanced', random_state=42, n_jobs=-1),
+        'Gradient Boosting': GradientBoostingClassifier(n_estimators=100, learning_rate=0.05, max_depth=4, random_state=42)
+    }
+
+    ensemble = VotingClassifier(
+        estimators=[
+            ('rf_opt', models['Random Forest']),
+            ('gb_opt', models['Gradient Boosting'])
+        ],
+        voting='soft'
+    )
+    
+    trained_models = {}
+    for name, model in models.items():
+        model.fit(X_train_res, y_train_res)
+        trained_models[name] = model
+
+    ensemble.fit(X_train_res, y_train_res)
+    trained_models['Ensamble Híbrido'] = ensemble
+
+    return {
+        'preprocessor': preprocessor,
+        'models': trained_models
+    }
+
+
+# Spinner para avisar al usuario mientras se entrena la primera vez
+with st.spinner("Iniciando el servidor de CrediNova y entrenando los modelos predictivos en la nube..."):
+    pipeline_data = train_pipeline_in_cloud()
+
+if pipeline_data is None:
+    st.error("No se pudo iniciar la aplicación porque falta el archivo 'adult.csv' en su repositorio de GitHub.")
+else:
     preprocessor = pipeline_data['preprocessor']
     models_dict = pipeline_data['models']
 
@@ -311,7 +382,6 @@ if pipeline_data is not None:
                     fig, ax = plt.subplots(figsize=(7, 4.2))
                     sns.set_style("whitegrid")
                     
-                    # Colores estables destacando el modelo híbrido (Ensamble)
                     colores_grafico = ['#B0C4DE', '#B0C4DE', '#B0C4DE', '#B0C4DE', '#1E3A8A']
                     
                     bars = ax.barh(nombres_grafico, probabilidades_grafico, color=colores_grafico, edgecolor='black', height=0.55)
