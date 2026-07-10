@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+"""
+app.py
+Interfaz interactiva de Streamlit para CrediNova.
+"""
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,7 +13,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.base import BaseEstimator, TransformerMixin
 
-# Clase OutlierCapper necesaria para reconstruir el Pipeline
+# Clase OutlierCapper para permitir la deserialización de pickle
 class OutlierCapper(BaseEstimator, TransformerMixin):
     def __init__(self, age_cap=74.0, hpw_lower=32.5, hpw_upper=45.0, fnl_lower=12285.0, fnl_upper=415000.0):
         self.age_cap = age_cap
@@ -30,7 +35,7 @@ class OutlierCapper(BaseEstimator, TransformerMixin):
             X_out['fnlwgt'] = X_out['fnlwgt'].clip(lower=self.fnl_lower, upper=self.fnl_upper)
         return X_out
 
-# Registro de módulos para compatibilidad de Pickle
+# Registro de namespaces para evitar errores de importación local/remota
 sys.modules['save_pipeline'] = sys.modules[__name__]
 sys.modules['train_model'] = sys.modules[__name__]
 
@@ -121,13 +126,10 @@ pipeline_data = load_pipeline()
 
 if pipeline_data is not None:
     preprocessor = pipeline_data['preprocessor']
-    models_dict = pipeline_data['models']  # Diccionario con todos los modelos
+    models_dict = pipeline_data['models']
 
     tab1, tab2 = st.tabs(["📊 Contexto & Comparativa General", "🔍 Evaluación Crediticia e Ingreso de Datos"])
 
-    # =========================================================================
-    # TAB 1: CONTEXTO Y COMPARATIVA HISTÓRICA
-    # =========================================================================
     with tab1:
         st.markdown("<h3 class='section-header'>1. Contexto y Problemática</h3>", unsafe_allow_html=True)
         col_ctx1, col_ctx2 = st.columns(2)
@@ -164,9 +166,6 @@ if pipeline_data is not None:
         df_comparativa = pd.DataFrame(datos_comparativa)
         st.dataframe(df_comparativa.style.highlight_max(axis=0, subset=["F1-Score", "ROC AUC"], color="#D1FAE5"))
 
-    # =========================================================================
-    # TAB 2: SOLICITUD DE DATOS, RESULTADOS INTEGRADOS Y RECOMENDACIONES
-    # =========================================================================
     with tab2:
         st.markdown("<h3 class='section-header'>1. Formulario de Captura de Datos</h3>", unsafe_allow_html=True)
         
@@ -232,7 +231,6 @@ if pipeline_data is not None:
             try:
                 processed_input = preprocessor.transform(input_df)
                 
-                # Calcular predicciones y probabilidades para TODOS los modelos
                 resultados_usuario = []
                 probabilidades_grafico = []
                 nombres_grafico = []
@@ -254,16 +252,11 @@ if pipeline_data is not None:
 
                 df_res_usuario = pd.DataFrame(resultados_usuario)
 
-                # El modelo ganador define la decisión principal (Ensamble Híbrido)
                 pred_final = models_dict['Ensamble Híbrido'].predict(processed_input)[0]
                 prob_final = models_dict['Ensamble Híbrido'].predict_proba(processed_input)[0]
 
-                # =============================================================
-                # NUEVA SECCIÓN DE RESULTADOS MEJORADA (ESTILO DASHBOARD)
-                # =============================================================
                 st.markdown("<h3 class='section-header'>2. Diagnóstico de Capacidad Económica</h3>", unsafe_allow_html=True)
                 
-                # Tarjetas de Resumen del Solicitante (KPIs)
                 st.markdown(f"""
                 <div class='kpi-container'>
                     <div class='kpi-card'>
@@ -272,11 +265,11 @@ if pipeline_data is not None:
                     </div>
                     <div class='kpi-card'>
                         <div class='kpi-value'>{education}</div>
-                        <div class='kpi-label'>Máximo Grado de Instrucción</div>
+                        <div class='kpi-label'>Grado de Instrucción</div>
                     </div>
                     <div class='kpi-card'>
                         <div class='kpi-value'>{hours_per_week} hrs</div>
-                        <div class='kpi-label'>Jornada Laboral Semanal</div>
+                        <div class='kpi-label'>Horas de Trabajo Semanal</div>
                     </div>
                     <div class='kpi-card'>
                         <div class='kpi-value'>${capital_gain:,.0f} USD</div>
@@ -288,14 +281,13 @@ if pipeline_data is not None:
                 col_res1, col_res2 = st.columns(2)
 
                 with col_res1:
-                    # Tarjeta de Decisión Principal
                     if pred_final == 1:
                         st.markdown(f"""
                         <div class='result-card-high'>
                             <h4 style='color: #047857; margin-top:0;'>🟢 CAPACIDAD DE INGRESO ALTO (>50K USD Anuales)</h4>
                             <p style='color: #065F46; font-size: 0.95rem; line-height: 1.5;'>
                                 El algoritmo de <b>Ensamble Híbrido</b> ha clasificado al solicitante dentro del segmento de ingresos superiores con un <b>{prob_final[1]*100:.2f}% de probabilidad</b>.<br>
-                                Este perfil se asocia con un nivel alto de estabilidad y menor propensión de impago relativo.
+                                Este perfil se asocia con estabilidad laboral e ingresos compatibles con productos financieros de gama alta.
                             </p>
                         </div>
                         """, unsafe_allow_html=True)
@@ -305,23 +297,21 @@ if pipeline_data is not None:
                             <h4 style='color: #B45309; margin-top:0;'>🟡 CAPACIDAD DE INGRESO ESTÁNDAR (<=50K USD Anuales)</h4>
                             <p style='color: #92400E; font-size: 0.95rem; line-height: 1.5;'>
                                 El algoritmo de <b>Ensamble Híbrido</b> ha clasificado al solicitante dentro del segmento de ingresos moderados con un <b>{prob_final[0]*100:.2f}% de certeza</b>.<br>
-                                Se sugiere precaución y limitación en líneas de crédito no garantizadas.
+                                Se sugiere precaución al asignar líneas de financiamiento elevadas sin aval adicional.
                             </p>
                         </div>
                         """, unsafe_allow_html=True)
 
-                    # Tabla interactiva con las predicciones individuales en tiempo real
                     st.write("**Detalle de estimaciones por modelo:**")
                     st.dataframe(df_res_usuario, hide_index=True, use_container_width=True)
 
                 with col_res2:
-                    # Gráfica de Barras Comparativa (Igual a la del prototipo PDF)
                     st.write("**Comparativa de Probabilidad del Cliente (>50K):**")
                     
                     fig, ax = plt.subplots(figsize=(7, 4.2))
                     sns.set_style("whitegrid")
                     
-                    # Generar colores dinámicos (resaltando el Ensamble)
+                    # Colores estables destacando el modelo híbrido (Ensamble)
                     colores_grafico = ['#B0C4DE', '#B0C4DE', '#B0C4DE', '#B0C4DE', '#1E3A8A']
                     
                     bars = ax.barh(nombres_grafico, probabilidades_grafico, color=colores_grafico, edgecolor='black', height=0.55)
@@ -329,7 +319,6 @@ if pipeline_data is not None:
                     ax.set_xlabel("Probabilidad de Ingreso Alto (%)")
                     ax.set_title("Predicciones estimadas por modelo para este cliente")
                     
-                    # Agregar etiquetas de porcentaje en las barras
                     for bar in bars:
                         width = bar.get_width()
                         ax.text(width + 2, bar.get_y() + bar.get_height()/2, f'{width:.1f}%', 
@@ -338,9 +327,6 @@ if pipeline_data is not None:
                     plt.tight_layout()
                     st.pyplot(fig)
 
-                # =============================================================
-                # RECOMENDACIONES DE NEGOCIO PERSONALIZADAS
-                # =============================================================
                 st.markdown("<h3 class='section-header'>3. Recomendaciones de Negocio para CrediNova</h3>", unsafe_allow_html=True)
                 
                 if pred_final == 1:
